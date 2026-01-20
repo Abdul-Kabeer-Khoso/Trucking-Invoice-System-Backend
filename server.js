@@ -7,6 +7,21 @@ require("dotenv").config(); // Load .env file
 
 const app = express();
 
+// Add this early in server.js
+console.log("=== VERCEL ENV DEBUG ===");
+console.log("MONGODB_URI exists:", !!process.env.MONGODB_URI);
+console.log("MONGODB_URI length:", process.env.MONGODB_URI?.length);
+console.log(
+  "MONGODB_URI first 50 chars:",
+  process.env.MONGODB_URI?.substring(0, 50),
+);
+console.log(
+  "MONGODB_URI last 50 chars:",
+  process.env.MONGODB_URI?.substring(process.env.MONGODB_URI?.length - 50),
+);
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("=== END DEBUG ===");
+
 // ✅ UPDATED: Simplified CORS for Vercel + Railway
 const corsOptions = {
   origin: function (origin, callback) {
@@ -56,13 +71,29 @@ console.log(`🔗 Connecting to MongoDB...`);
 console.log(`📊 MongoDB Host: Railway`);
 console.log(`🔑 MongoDB URI: ${MONGODB_URI ? "Set" : "Not set"}`);
 
-// ✅ SIMPLIFIED CONNECTION - NO OPTIONS NEEDED
-mongoose
-  .connect(MONGODB_URI)
-  .then(async () => {
-    console.log("✅ MongoDB Connected to Railway!");
-    console.log(`📊 Database: ${mongoose.connection.name}`);
+// ✅ VERCEL-OPTIMIZED MONGODB CONNECTION
+let isConnected = false;
 
+const connectDB = async () => {
+  if (isConnected) {
+    console.log("Using existing MongoDB connection");
+    return;
+  }
+
+  try {
+    console.log("Creating new MongoDB connection...");
+    const conn = await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 1,
+      minPoolSize: 0,
+      maxIdleTimeMS: 10000,
+    });
+
+    isConnected = conn.connections[0].readyState === 1;
+    console.log(`✅ MongoDB Connected: ${isConnected}`);
+
+    // Initialize counter
     try {
       const Counter = require("./models/Counter");
       const counter = await Counter.findOne({ name: "invoiceNumber" });
@@ -74,34 +105,96 @@ mongoose
     } catch (error) {
       console.log("⚠️ Counter init error:", error.message);
     }
-  })
-  .catch((err) => {
-    console.log("❌ Connection Error:", err.message);
-    console.log("\n🔧 Troubleshooting:");
-    console.log(
-      "1. Check Railway MongoDB connection string in Vercel env vars",
-    );
-    console.log("2. Check Railway MongoDB service is running");
-    console.log("3. Verify MONGODB_URI format");
+  } catch (error) {
+    console.log("❌ MongoDB Connection Error:", error.message);
+    isConnected = false;
+  }
+};
+
+// Call connectDB
+connectDB();
+
+// Handle connection events
+mongoose.connection.on("connected", () => {
+  console.log("✅ MongoDB event: connected");
+  isConnected = true;
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.log("⚠️ MongoDB event: disconnected");
+  isConnected = false;
+});
+
+mongoose.connection.on("error", (err) => {
+  console.log("❌ MongoDB event: error", err.message);
+  isConnected = false;
+});
+
+// Add timeout middleware for Vercel
+app.use((req, res, next) => {
+  // Set timeout for Vercel (9 seconds to be safe)
+  req.setTimeout(9000);
+  res.setTimeout(9000);
+  next();
+});
+
+// Add request logging
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    console.log(`${req.method} ${req.originalUrl} - ${duration}ms`);
+
+    // Warn if request is too slow for Vercel
+    if (duration > 8000) {
+      console.warn(`⚠️ Slow request: ${duration}ms - might timeout on Vercel`);
+    }
   });
 
-// ✅ REMOVED: app.options() handler - cors() handles it automatically
+  next();
+});
+
+// DEBUG: Check routes loading
+console.log("=== ROUTES DEBUG ===");
+console.log("invoiceRoutes type:", typeof invoiceRoutes);
+
+if (invoiceRoutes && typeof invoiceRoutes === "function") {
+  console.log("✅ Routes loaded as function");
+} else {
+  console.log("❌ Routes not loaded properly, using fallback...");
+
+  // Fallback test route
+  app.get("/api/invoices", (req, res) => {
+    res.json({
+      message: "Test invoices route",
+      database: isConnected ? "connected" : "disconnected",
+      timestamp: new Date().toISOString(),
+    });
+  });
+}
 
 // API Routes
 app.use("/api/invoices", invoiceRoutes);
 
-// ✅ Health check endpoint (Vercel compatible)
+// ✅ Updated Health check endpoint (Vercel compatible)
 app.get("/api/health", (req, res) => {
+  const dbState = mongoose.connection.readyState;
+  const dbStatus = dbState === 1 ? "connected" : "disconnected";
+
   res.status(200).json({
     status: "OK",
-    database:
-      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    database: dbStatus,
+    readyState: dbState,
+    isConnected: isConnected,
     environment: process.env.NODE_ENV || "development",
     port: PORT,
     service: "Invoice API",
     host: "Vercel Serverless",
     database_provider: "Railway MongoDB",
     timestamp: new Date().toISOString(),
+    vercel: !!process.env.VERCEL,
+    region: process.env.VERCEL_REGION || "local",
   });
 });
 
@@ -122,6 +215,8 @@ app.get("/api/config", (req, res) => {
 
 // ✅ Root endpoint for Vercel
 app.get("/", (req, res) => {
+  const dbState = mongoose.connection.readyState;
+
   res.json({
     message: "Invoice Management API",
     version: "1.0.0",
@@ -129,6 +224,7 @@ app.get("/", (req, res) => {
     environment: process.env.NODE_ENV || "development",
     deployed_on: "Vercel",
     database: "Railway MongoDB",
+    database_status: dbState === 1 ? "connected" : "disconnected",
     endpoints: {
       invoices: "/api/invoices",
       health: "/api/health",
@@ -182,6 +278,7 @@ app.use((req, res) => {
       health: "/api/health",
       config: "/api/config",
     },
+    timestamp: new Date().toISOString(),
   });
 });
 
