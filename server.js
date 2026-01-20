@@ -7,16 +7,38 @@ require("dotenv").config(); // Load .env file
 
 const app = express();
 
-// CORS Configuration - Fixed for Railway
+// ✅ UPDATED: Simplified CORS for Vercel + Railway
 const corsOptions = {
-  origin: [
-    "http://localhost:5173", // Your Vite frontend
-    "http://localhost:3000", // Create React App frontend
-    "http://localhost:5000", // Your backend
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // List of allowed origins
+    const allowedOrigins = [
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://localhost:5000",
+      /\.vercel\.app$/, // All Vercel apps
+    ];
+
+    // Check if origin matches any allowed pattern
+    if (
+      allowedOrigins.some((pattern) => {
+        if (pattern instanceof RegExp) {
+          return pattern.test(origin);
+        }
+        return pattern === origin;
+      })
+    ) {
+      return callback(null, true);
+    }
+
+    callback(new Error(`CORS blocked: ${origin} not allowed`));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  optionsSuccessStatus: 200, // For legacy browser support
 };
 
 // Apply CORS middleware
@@ -24,20 +46,21 @@ app.use(cors(corsOptions));
 
 app.use(express.json());
 
-// ✅ Get connection string from .env file
+// ✅ Get connection string from .env file (Railway MongoDB)
 const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/invoicesystem";
 const PORT = process.env.PORT || 5000;
 
 console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
 console.log(`🔗 Connecting to MongoDB...`);
-console.log(`📊 MongoDB URI: ${MONGODB_URI ? "Set" : "Not set"}`);
+console.log(`📊 MongoDB Host: Railway`);
+console.log(`🔑 MongoDB URI: ${MONGODB_URI ? "Set" : "Not set"}`);
 
 // ✅ SIMPLIFIED CONNECTION - NO OPTIONS NEEDED
 mongoose
   .connect(MONGODB_URI)
   .then(async () => {
-    console.log("✅ MongoDB Connected!");
+    console.log("✅ MongoDB Connected to Railway!");
     console.log(`📊 Database: ${mongoose.connection.name}`);
 
     try {
@@ -55,35 +78,30 @@ mongoose
   .catch((err) => {
     console.log("❌ Connection Error:", err.message);
     console.log("\n🔧 Troubleshooting:");
-    console.log("1. Check .env file exists with MONGODB_URI");
-    console.log("2. Check your MongoDB is running");
-    console.log("3. For Railway, ensure password is correct");
+    console.log(
+      "1. Check Railway MongoDB connection string in Vercel env vars",
+    );
+    console.log("2. Check Railway MongoDB service is running");
+    console.log("3. Verify MONGODB_URI format");
   });
 
-// Handle OPTIONS preflight requests for all routes
-app.options("/*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header(
-    "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, Accept, Origin, X-Requested-With",
-  );
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.sendStatus(200);
-});
+// ✅ REMOVED: app.options() handler - cors() handles it automatically
 
 // API Routes
 app.use("/api/invoices", invoiceRoutes);
 
-// Health check endpoint
-app.get("/health", (req, res) => {
+// ✅ Health check endpoint (Vercel compatible)
+app.get("/api/health", (req, res) => {
   res.status(200).json({
     status: "OK",
     database:
       mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     environment: process.env.NODE_ENV || "development",
     port: PORT,
-    frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+    service: "Invoice API",
+    host: "Vercel Serverless",
+    database_provider: "Railway MongoDB",
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -97,11 +115,38 @@ app.get("/api/config", (req, res) => {
     apiUrl,
     frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
     environment: process.env.NODE_ENV || "development",
+    deployed_on: "Vercel",
+    database: "Railway MongoDB",
+  });
+});
+
+// ✅ Root endpoint for Vercel
+app.get("/", (req, res) => {
+  res.json({
+    message: "Invoice Management API",
+    version: "1.0.0",
+    status: "running",
+    environment: process.env.NODE_ENV || "development",
+    deployed_on: "Vercel",
+    database: "Railway MongoDB",
+    endpoints: {
+      invoices: "/api/invoices",
+      health: "/api/health",
+      config: "/api/config",
+    },
+    usage: {
+      create_invoice: "POST /api/invoices",
+      get_invoices: "GET /api/invoices",
+      update_invoice: "PUT /api/invoices/:id",
+      delete_invoice: "DELETE /api/invoices/:id",
+    },
   });
 });
 
 // Serve frontend if in same project (for production)
-if (process.env.NODE_ENV === "production") {
+// ✅ NOTE: For Vercel, we'll deploy frontend separately
+// Remove or keep this if you want combined deployment
+if (process.env.NODE_ENV === "production" && !process.env.VERCEL) {
   // Serve static files from React/Vue build folder
   app.use(express.static(path.join(__dirname, "client/build")));
 
@@ -111,22 +156,6 @@ if (process.env.NODE_ENV === "production") {
   });
 
   console.log("🚀 Production mode: Serving frontend from client/build");
-} else {
-  // Development route
-  app.get("/", (req, res) => {
-    res.json({
-      message: "Invoice API Server",
-      status: "running",
-      environment: "development",
-      port: PORT,
-      apiUrl: `http://localhost:${PORT}`,
-      endpoints: {
-        invoices: "/api/invoices",
-        health: "/health",
-        config: "/api/config",
-      },
-    });
-  });
 }
 
 // Error handling middleware (must be after routes)
@@ -138,6 +167,7 @@ app.use((err, req, res, next) => {
       process.env.NODE_ENV === "production"
         ? "Internal server error"
         : err.message,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -147,15 +177,29 @@ app.use((req, res) => {
     error: "Route not found",
     path: req.originalUrl,
     method: req.method,
+    available_endpoints: {
+      api: "/api/invoices",
+      health: "/api/health",
+      config: "/api/config",
+    },
   });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`🌐 Accessible at: http://0.0.0.0:${PORT}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`📁 Environment: ${process.env.NODE_ENV || "development"}`);
+// ✅ VERCEL COMPATIBILITY: Export the app for serverless
+if (process.env.VERCEL) {
+  // For Vercel serverless deployment
   console.log(
-    `🔗 API URL: ${process.env.RAILWAY_STATIC_URL || `http://localhost:${PORT}`}`,
+    "🚀 Detected Vercel environment - Exporting as serverless function",
   );
-});
+  module.exports = app;
+} else {
+  // For local development
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`🌐 Accessible at: http://0.0.0.0:${PORT}`);
+    console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`📁 Environment: ${process.env.NODE_ENV || "development"}`);
+    console.log(`🏗️  Deployment: Local (Vercel-ready)`);
+    console.log(`🗄️  Database: Railway MongoDB`);
+  });
+}
