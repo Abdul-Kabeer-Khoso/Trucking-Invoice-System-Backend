@@ -7,39 +7,31 @@ require("dotenv").config(); // Load .env file
 
 const app = express();
 
-// CORS Configuration for production
-// const corsOptions = {
-//   origin:
-//     process.env.NODE_ENV === "production"
-//       ? [
-//           "https://your-frontend-domain.com", // Your actual frontend URL
-//           "http://localhost:3000", // Allow localhost for testing
-//         ]
-//       : ["http://localhost:3000"], // Development
-//   credentials: true,
-//   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-//   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-// };
+// CORS Configuration - Fixed for Railway
+const corsOptions = {
+  origin: [
+    "http://localhost:5173", // Your Vite frontend
+    "http://localhost:3000", // Create React App frontend
+    "http://localhost:5000", // Your backend
+  ],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+};
 
-app.use(
-  cors({
-    origin: "*", // Allow all origins
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
+// Apply CORS middleware
+app.use(cors(corsOptions));
 
-// app.use(cors(corsOptions));
 app.use(express.json());
 
 // ✅ Get connection string from .env file
-const MONGODB_URI = "mongodb://127.0.0.1:27017/invoicesystem";
-// process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/invoicesystem";
-
+const MONGODB_URI =
+  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/invoicesystem";
 const PORT = process.env.PORT || 5000;
 
 console.log(`🌐 Environment: ${process.env.NODE_ENV || "development"}`);
 console.log(`🔗 Connecting to MongoDB...`);
+console.log(`📊 MongoDB URI: ${MONGODB_URI ? "Set" : "Not set"}`);
 
 // ✅ SIMPLIFIED CONNECTION - NO OPTIONS NEEDED
 mongoose
@@ -68,6 +60,18 @@ mongoose
     console.log("3. For Railway, ensure password is correct");
   });
 
+// Handle OPTIONS preflight requests for all routes
+app.options("/*", (req, res) => {
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Accept, Origin, X-Requested-With",
+  );
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.sendStatus(200);
+});
+
 // API Routes
 app.use("/api/invoices", invoiceRoutes);
 
@@ -77,6 +81,21 @@ app.get("/health", (req, res) => {
     status: "OK",
     database:
       mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    environment: process.env.NODE_ENV || "development",
+    port: PORT,
+    frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  });
+});
+
+// Route to get API URL for frontend
+app.get("/api/config", (req, res) => {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const apiUrl = `${protocol}://${host}`;
+
+  res.json({
+    apiUrl,
+    frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
     environment: process.env.NODE_ENV || "development",
   });
 });
@@ -99,9 +118,12 @@ if (process.env.NODE_ENV === "production") {
       message: "Invoice API Server",
       status: "running",
       environment: "development",
+      port: PORT,
+      apiUrl: `http://localhost:${PORT}`,
       endpoints: {
         invoices: "/api/invoices",
         health: "/health",
+        config: "/api/config",
       },
     });
   });
@@ -128,8 +150,12 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🌐 Accessible at: http://0.0.0.0:${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`📁 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(
+    `🔗 API URL: ${process.env.RAILWAY_STATIC_URL || `http://localhost:${PORT}`}`,
+  );
 });
