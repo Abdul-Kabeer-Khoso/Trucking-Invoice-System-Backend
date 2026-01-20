@@ -78,6 +78,9 @@ exports.saveInvoice = async (req, res) => {
       customerContact,
       customerAddress,
       entries,
+      discountPercent = 0, // NEW: Add discount percentage
+      subTotal = 0, // NEW: Add subtotal
+      totalAmount = 0, // NEW: Add total amount after discount
     } = req.body;
 
     // Check if invoice already exists
@@ -89,6 +92,9 @@ exports.saveInvoice = async (req, res) => {
       invoice.customerContact = customerContact;
       invoice.customerAddress = customerAddress;
       invoice.entries = entries;
+      invoice.discountPercent = discountPercent; // NEW: Update discount
+      invoice.subTotal = subTotal; // NEW: Update subtotal
+      invoice.totalAmount = totalAmount; // NEW: Update total amount
       invoice.updatedAt = new Date();
 
       console.log("Updating existing invoice:", invoiceNumber);
@@ -100,6 +106,9 @@ exports.saveInvoice = async (req, res) => {
         customerContact,
         customerAddress,
         entries,
+        discountPercent, // NEW: Save discount percentage
+        subTotal, // NEW: Save subtotal
+        totalAmount, // NEW: Save total amount after discount
       });
       console.log("Creating new invoice:", invoiceNumber);
     }
@@ -279,7 +288,7 @@ exports.savePDF = async (req, res) => {
 
     // Add customer address if available
     if (invoice.customerContact) {
-      doc.text(invoice.customerContact, pageMargin, billToY + 30);
+      doc.text(invoice.customerContact + ",", pageMargin, billToY + 30);
     }
 
     if (invoice.customerAddress) {
@@ -351,13 +360,15 @@ exports.savePDF = async (req, res) => {
     const tableTop = doc.y;
 
     // Adjusted column widths to prevent overflow
-    const columnWidths = [55, 55, 110, 60, 45, 55, 43, 55, 55];
+    const columnWidths = [50, 50, 90, 55, 45, 55, 45, 50, 50, 47];
     const totalTableWidth = columnWidths.reduce((a, b) => a + b, 0);
 
+    // DECLARE tableStartX HERE (before the if block)
+    let tableStartX = pageMargin; // Default value
+
     // Center table
-    let tableStartX = pageMargin;
     if (totalTableWidth < pageWidth - pageMargin * 2) {
-      tableStartX = (pageWidth - totalTableWidth) / 2;
+      tableStartX = (pageWidth - totalTableWidth) / 2; // Update if condition met
     }
 
     const headers = [
@@ -370,9 +381,10 @@ exports.savePDF = async (req, res) => {
       "Rate",
       "Freight",
       "Sub Total",
+      "Discount",
     ];
 
-    let x = tableStartX;
+    let x = tableStartX; // Now tableStartX is defined
     doc.font("Helvetica-Bold").fontSize(8); // Reduced font size for headers
 
     // Draw table header with background
@@ -393,8 +405,16 @@ exports.savePDF = async (req, res) => {
     let y = tableTop + 20;
     doc.font("Helvetica").fontSize(8).fillColor("#000");
 
+    // Get discount percentage from invoice level
+    const invoiceDiscountPercent = parseFloat(invoice.discountPercent) || 0;
+
+    // Initialize total variables
+    let totalFreight = 0;
+    let totalNetAmount = 0;
+    let totalDiscount = 0;
+
     invoice.entries.forEach((entry) => {
-      x = tableStartX;
+      x = tableStartX; // Now tableStartX is defined
 
       // Format date
       let loadDate = "";
@@ -406,8 +426,15 @@ exports.savePDF = async (req, res) => {
         }
       }
 
-      // Calculate subtotal
-      const subTotal = parseFloat(entry.freight) || 0;
+      // Calculate values - using invoice level discount percentage
+      const freight = parseFloat(entry.freight) || 0;
+      const discountAmount = (freight * invoiceDiscountPercent) / 100; // Calculate discount amount using invoice discount percentage
+      const netAmount = freight - discountAmount; // Net amount after discount
+
+      // Accumulate totals
+      totalFreight += freight;
+      totalDiscount += discountAmount;
+      totalNetAmount += netAmount;
 
       // FIXED: Convert all values to strings before using substring
       const vehicleNoStr = String(entry.vehicleNo || "");
@@ -424,8 +451,9 @@ exports.savePDF = async (req, res) => {
         parseFloat(entry.weight || 0).toFixed(2),
         parseFloat(entry.chWeight || 0).toFixed(2),
         parseFloat(entry.rate || 0).toFixed(2),
-        parseFloat(entry.freight || 0).toFixed(2),
-        subTotal.toFixed(2),
+        freight.toFixed(2),
+        netAmount.toFixed(2), // Show NET amount (after discount)
+        invoiceDiscountPercent.toFixed(2) + "%", // Show DISCOUNT AMOUNT
       ];
 
       // Draw row cells
@@ -451,19 +479,10 @@ exports.savePDF = async (req, res) => {
       }
     });
 
-    // Draw bottom line of table
-    doc
-      .moveTo(tableStartX, y)
-      .lineTo(tableStartX + totalTableWidth, y)
-      .stroke();
-
     // -------- Amount in Words Box --------
-    const totalAmount = invoice.entries.reduce(
-      (sum, e) => sum + (parseFloat(e.freight) || 0),
-      0,
-    );
+    // Use totalNetAmount for amount in words
     const amountWords =
-      numberToWords.toWords(Math.round(totalAmount)) + " Only";
+      numberToWords.toWords(Math.round(totalNetAmount)) + " Only";
 
     const wordsBoxY = y + 20;
     const wordsBoxWidth = pageWidth * 0.6;
@@ -490,34 +509,48 @@ exports.savePDF = async (req, res) => {
 
     const totalsContentX = totalsBoxX + 10;
     const subTotalY = wordsBoxY + 10;
-    const totalY = wordsBoxY + 25;
+    const discountY = wordsBoxY + 20; // Added line for discount
+    const totalY = wordsBoxY + 30; // Adjusted for discount line
 
-    // Sub Total
+    // Sub Total (before discount)
     doc
-      .fontSize(9)
+      .fontSize(11)
       .font("Helvetica")
       .text("Sub Total:", totalsContentX, subTotalY, {
         width: totalsBoxWidth - 40,
       });
     doc
       .font("Helvetica-Bold")
-      .text(totalAmount.toFixed(2), totalsContentX, subTotalY, {
+      .text(totalFreight.toFixed(2), totalsContentX, subTotalY, {
         align: "right",
         width: totalsBoxWidth - 40,
       });
 
-    // Total (bold)
+    // Discount (new line)
+    // doc
+    //   .fontSize(9)
+    //   .font("Helvetica")
+    //   .text("Discount:", totalsContentX, discountY, {
+    //     width: totalsBoxWidth - 40,
+    //   });
+    // doc
+    //   .font("Helvetica-Bold")
+    //   .text(totalDiscount.toFixed(2), totalsContentX, discountY, {
+    //     align: "right",
+    //     width: totalsBoxWidth - 40,
+    //   });
+
+    // Total (after discount)
     doc
-      .fontSize(10)
+      .fontSize(12)
       .font("Helvetica-Bold")
       .text("Total:", totalsContentX, totalY, {
         width: totalsBoxWidth - 40,
       });
-    doc.text(totalAmount.toFixed(2), totalsContentX, totalY, {
+    doc.text(totalNetAmount.toFixed(2), totalsContentX, totalY, {
       align: "right",
       width: totalsBoxWidth - 40,
     });
-
     // -------- Bank Details Box --------
     const bankBoxY = wordsBoxY + 70;
     const bankBoxHeight = 105; // Reduced height
@@ -573,18 +606,14 @@ exports.savePDF = async (req, res) => {
     }
 
     // -------- Simple Signature Line --------
-    const signatureY = bankBoxY + bankBoxHeight + 50;
-    doc
-      .moveTo(pageWidth - 150, signatureY)
-      .lineTo(pageWidth - pageMargin, signatureY)
-      .stroke();
+    const signatureY = bankBoxY + bankBoxHeight;
 
     doc
-      .fontSize(10)
+      .fontSize(12)
       .font("Helvetica")
-      .text("Authorized Signature", pageWidth - 150, signatureY + 5, {
-        width: 120,
-        align: "center",
+      .text("For Shree Ganesh Roadlines", pageWidth - 180, signatureY + 5, {
+        width: 200,
+        align: "left",
       });
 
     doc.end();

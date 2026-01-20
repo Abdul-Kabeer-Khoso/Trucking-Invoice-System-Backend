@@ -17,6 +17,9 @@ const invoiceSchema = new mongoose.Schema({
   customerAddress: {
     type: String,
   },
+  discountPercent: { type: Number, default: 0 }, // Overall discount percentage
+  subTotal: { type: Number, default: 0 },
+  totalAmount: { type: Number, required: true },
   entries: [
     {
       from: String,

@@ -8,25 +8,33 @@ require("dotenv").config(); // Load .env file
 const app = express();
 
 // CORS Configuration for production
-const corsOptions = {
-  origin:
-    process.env.NODE_ENV === "production"
-      ? [
-          "https://your-frontend-domain.com", // Your actual frontend URL
-          "http://localhost:3000", // Allow localhost for testing
-        ]
-      : ["http://localhost:3000"], // Development
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-};
+// const corsOptions = {
+//   origin:
+//     process.env.NODE_ENV === "production"
+//       ? [
+//           "https://your-frontend-domain.com", // Your actual frontend URL
+//           "http://localhost:3000", // Allow localhost for testing
+//         ]
+//       : ["http://localhost:3000"], // Development
+//   credentials: true,
+//   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+//   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+// };
 
-app.use(cors(corsOptions));
+app.use(
+  cors({
+    origin: "*", // Allow all origins
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+
+// app.use(cors(corsOptions));
 app.use(express.json());
 
 // ✅ Get connection string from .env file
-const MONGODB_URI =
-  process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/invoicesystem";
+const MONGODB_URI = "mongodb://127.0.0.1:27017/invoicesystem";
+// process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/invoicesystem";
 
 const PORT = process.env.PORT || 5000;
 
