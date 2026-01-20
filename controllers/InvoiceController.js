@@ -189,6 +189,80 @@ exports.newInvoice = async (req, res) => {
   }
 };
 
+// In your backend route file (e.g., routes/invoiceRoutes.js)
+exports.fieldSuggestions = async (req, res) => {
+  try {
+    const { field } = req.params;
+    const { search = "", limit = 10 } = req.query;
+
+    let query = {};
+    let matchStage = {};
+
+    if (search) {
+      matchStage[field] = { $regex: search, $options: "i" };
+    }
+
+    // Only include fields that exist in your schema
+    const allowedFields = [
+      "customerName",
+      "customerContact",
+      "customerAddress",
+      "from",
+      "to",
+      "vehicleNo",
+    ];
+    if (!allowedFields.includes(field)) {
+      return res.status(400).json({ success: false, message: "Invalid field" });
+    }
+
+    const pipeline = [
+      { $unwind: "$entries" },
+      { $match: matchStage },
+      {
+        $group: {
+          _id: `$entries.${field}`,
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { _id: { $ne: null, $ne: "" } } },
+      { $sort: { count: -1 } },
+      { $limit: parseInt(limit) },
+      {
+        $project: {
+          value: "$_id",
+          _id: 0,
+        },
+      },
+    ];
+
+    // For customer fields, they're at invoice level, not entries
+    if (
+      ["customerName", "customerContact", "customerAddress"].includes(field)
+    ) {
+      pipeline[0] = { $match: matchStage }; // No unwind needed
+      pipeline[1] = {
+        $group: {
+          _id: `$${field}`,
+          count: { $sum: 1 },
+        },
+      };
+    }
+
+    const suggestions = await Invoice.aggregate(pipeline);
+
+    // Extract just the values
+    const suggestionValues = suggestions.map((item) => item.value);
+
+    res.json({
+      success: true,
+      suggestions: suggestionValues,
+    });
+  } catch (error) {
+    console.error("Error fetching suggestions:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 exports.savePDF = async (req, res) => {
   try {
     const { invoiceNumber } = req.params;

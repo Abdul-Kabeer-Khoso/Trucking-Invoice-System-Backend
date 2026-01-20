@@ -6,6 +6,7 @@ const invoiceController = require("../controllers/InvoiceController");
 router.post("/add-entry", invoiceController.addEntry);
 router.post("/new-invoice", invoiceController.newInvoice);
 router.get("/next-number", invoiceController.nextNumber);
+router.get("/suggestions/:field", invoiceController.fieldSuggestions);
 router.get("/preview-next-number", invoiceController.previewNextNumber);
 router.get("/export-excel", invoiceController.exportExcel);
 router.get("/:invoiceNumber", invoiceController.getInvoiceByNumber);
